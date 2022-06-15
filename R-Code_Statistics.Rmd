@@ -1,0 +1,2685 @@
+---
+title: "Statistical processing of samples from dada2 output in phyloseq object, ORGANIC PLOTS ONLY"
+author: "Mike Parr, M.Parr2@ncl.ac.uk"
+output:
+  pdf_document: 
+    toc: yes
+    toc_depth: 6
+    fig_width: 20
+    fig_height: 12
+    fig_caption: yes
+    number_sections: yes
+    keep_tex: yes
+  word_document:
+    toc: yes
+  html_document:
+    toc: yes
+    theme: united
+    toc_depth: 5
+    fig_width: 8
+    fig_height: 8
+    fig_caption: yes
+    number_sections: yes
+    keep_md: yes
+    df_print: kable
+---
+```{r setup, include=FALSE} 
+library(knitr)
+opts_chunk$set(tidy.opts=list(width.cutoff=60),tidy=TRUE)
+knitr::opts_chunk$set(warning = FALSE, message = FALSE, dev = "png", dpi = 300, cache = TRUE) 
+```
+
+# Version
+```{r echo=FALSE, cache = FALSE}
+timevari = Sys.time()
+print(paste0("This file was created: ", timevari))
+print(paste0("Using ", R.version$version.string))
+```
+
+# To do list
+-     Community graphs where the samples are grouped by factor rather than 
+      combined by factor
+
+-     Add alpha and beta diversity indices to this document
+      -     Faith's PD is in another file and just needs to be properly 
+      presented and analysed
+      -     Jaccard is in another file but this needs to be compared to other 
+      methods that might be more suitable and account for phylogeny
+      -     Look more into Hill numbers, **HillR** package is a good place to 
+      start with these although a better understanding of the actual statistics 
+      and why/when/how to use them would be a bonus.
+
+-     Finish exploring the network analysis and add the finished product to this
+      document
+
+-     Try and get DPCoA to work, might have to do it on the desktop then import 
+      it in as a blue peter file
+
+-     Add some explanation and analyses to this document
+
+-     Highlight all of the interesting results (Maybe *** in the table of 
+      contents) to make it easier to find what is interesting
+      -     Maybe make a separate file for these interesting ones?
+      
+-     Figure out how to scale outputs into a usable size, some of them cut off 
+      the arrows. 
+      -     I think the **ggpubr** package works really well for this, although 
+      this can wait until I identify all of the interesting graphs first. 
+      -     It would also be helpful to label the chunks so the graphs in the 
+      output folder are names and I don't have to play sherlock to identify them
+      -     Fix text on graph, decluster labels and increase text size
+      
+-     Clean up fungal taxonomy i.e. remove k__ prefix, can be done in excel and 
+      then loaded back in
+
+-     Fix the fungal community graphs so they are equal and show proportionality
+      better
+
+-     Get data for experiment 2
+      -     Phosphorus, Potassium, Carbon, Nitrogen, pH...
+      
+-     Finish collecting data for split plots
+      -     Potassium (needs to be quantified in 7.05 freezer), Carbon, Nitrogen
+      
+-     Get past QLIF inputs and outputs with the 19/20 and 20/21 seasons being a 
+      priority
+      -     Yields, NPK input
+      
+-     differential abundance analysis
+
+-     https://www.hmcm.co.uk/how-to-identify-which-packages-are-being-used-by-r-file/
+-     https://mibwurrepo.github.io/Microbial-bioinformatics-introductory-course-Material-2018/core-microbiota.html
+
+# Introduction
+  This RMarkdown document has been prepared to archive the code as well as 
+subsequent statistics involved over the course of this project, and any results 
+either published or within my thesis will be sourced from this document to 
+ensure reproducibility and transparency. This document includes files that were 
+created through the processing of DNA extracts taken from aggregated 0-25cm soil 
+core samples taken from the Nafferton Factorial Systems Comparison in 
+Northumbria, England in October - November 2020 as a part of my PhD project at 
+Newcastle University. These samples were sequenced on an Illumina MiSeq NG 
+sequencer at FERA Science, York. Barcoding gene regions were amplified prior to 
+sequencing, these were the 16S region which identify Bacteria and Archaea, ITS 
+which identified Fungi, and 18S which identifies animals, in particular, 
+nematodes. 
+
+These files have already been identified and processed and are presented here 
+either as individual CSV files or as a packaged phyloseq object which contains 
+taxonomy, metadata, phylogeny trees, and abundance tables. 
+
+  I have also attempted to include some justification for why I have chosen each 
+statistical test and to include some rudimentary comments on the results with 
+my attempts to interpret them. This document does not significantly detail any 
+troubleshooting (of which I have lost hours of my life to) outside of any 
+in-line comments within the code itself. 
+
+For the sake of space, code has been included for its first use but is not 
+included in those following where only minor modifications have been added. If 
+you would like to see the full code or would like access to any of the resources 
+used in this file, please contact me. In future a link to the data repository 
+will be added.  
+ 
+# Start
+
+## Load in packages
+Many of these packages are not in use by the code but were included at the head 
+of guides and walkthroughs from which I have sourced much of this script. In 
+future the *list.functions.in.file()* function will be used and this chunk will 
+be reduced.
+
+The *set.seed()* function is being included to increase reproducibility as 
+random values may be included in functions. One example of this is the PERMANOVA 
+statistical test, where P-values and F-values may vary significantly, or may not 
+match during subsequent runs. [Note] It turns out this must be reset each time 
+```{r echo=F, message=FALSE, warning=FALSE, results='hide'}
+set.seed(13) #set.seed(13) chosen as it is a lucky number
+
+library(rstatix)
+library(XML)
+library(jsonlite)
+library(RCurl)
+library(remotes)
+library(BiocManager)
+library(data.table) 
+library(devtools)
+library(doParallel)
+library(plyr);library(dplyr)
+
+library(btools) #library(devtools);devtools::install_github('twbattaglia/btools')
+library(ShortRead)
+library(DESeq2) #BiocManager::install("DESeq2")
+library(DT) 
+library(extrafont)
+#library(ggord) #needs special install
+library(ggplot2)
+library(ggplotify)
+library(ggpubr)
+library(gridExtra)
+library(hillR)
+library(labdsv) #
+library(metagenomeSeq) #BiocManager::install("metagenomeSeq")
+library(metagMisc) #devtools::install_github("vmikk/metagMisc")
+library(microbiome) #BiocManager::install("microbiome")
+library(phyloseq)
+library(picante)
+#library(RAM)
+library(RColorBrewer) 
+library(reshape2)
+library(scales)
+library(stringr)
+library(tidyr)
+library(vegan)
+library(psadd) #devtools::install_github("cpauvert/psadd")
+
+library(microbiomeSeq) #install_github("umerijaz/microbiomeSeq")
+
+
+
+
+#Setting up parallel processing in Windows ----
+cl <- makeCluster(detectCores(), type= 'FORK') #Change to FORK if working on linux, PSOCK on windows 
+registerDoParallel(cl)
+
+```
+
+```{r}
+BiocManager::install("adespatial", dependencies = T)
+BiocManager::install("WGCNA")
+install_github("umerijaz/microbiomeSeq")
+library(microbiomeSeq)
+```
+
+
+
+
+
+## Set colour scheme
+The colour palette was added as a variable so that I could increase the size of it at anytime without having to trawl through the code adding more colours. Due to the number of variables being plotted, the default palettes included in the **ggplot2** package were insufficient and plotted them as a null value coloured shape. Alternatives from other packages, such as rainbow or choosing evenly spaced colours from the colour wheel rendered plots with a continuous colour scale, while randomly assigning colours regularly put two similar colours next to each other. 
+```{r}
+ColourScheme = c("darkblue", "darkgoldenrod1", "darkseagreen", "darkorchid", 
+                 "darkolivegreen1", "lightskyblue", "darkgreen", "deeppink", 
+                 "khaki2", "firebrick", "brown1", "darkorange1", "cyan1", 
+                 "royalblue4", "darksalmon", "darkblue", "royalblue4", 
+                 "dodgerblue3", "steelblue1", "lightskyblue", "darkseagreen", 
+                 "darkgoldenrod1", "darkseagreen", "darkorchid", 
+                 "darkolivegreen1", "brown1", "darkorange1", "cyan1", 
+                 "darkgrey","pink", "#89C5DA", "#DA5724","#74D944", "#CE50CA", 
+                 "#3F4921", "#C0717C", "#CBD588", "#5F7FC7", "#673770", 
+                 "#D3D93E", "#38333E", "#508578", "#D7C1B1", "#689030", 
+                 "#AD6F3B", "#CD9BCD", "#D14285", "#6DDE88", "#652926", 
+                 "#7FDCC0", "#C84248", "#8569D5","#5E738F", "#D1A33D", 
+                 "#8A7C64", "#599861" )
+```
+
+
+## Load in objects, subset, and update metadata
+The metadata is constantly being updated to include values from wet work such as chemical analysis, field inputs and outputs, and reformatted values. CSS normalisation was carried out to account for the significant variation in reads per sample and allow better comparisons to be made. The method chosen was influenced by Paulson *et al.,* (2013) [doi:10.1038/nmeth.2658]. 
+```{r eval=FALSE}
+#load in original phyloseq objects
+ps16S = readRDS("~/R/R files/ps16S.rds")
+psITS = readRDS("~/R/R files/psITS.rds")
+
+#exclude non-target kingdoms; archaea have been exluded due to lack of diversity
+#ps16S = subset_taxa(ps16S, Kingdom=="Bacteria") 
+#psITS = subset_taxa(psITS, Kingdom=="Fungi")  
+
+#clean up names in ITS file
+
+#tax_table(psITS)[, colnames(tax_table(psITS))] <- gsub(tax_table(psITS)[, colnames(tax_table(psITS))],     pattern = "[a-z]__", replacement = "")
+
+#replace metadata with improved metadata file, contains better object labels 
+#and some preliminary data such as pH and moisture
+BacMeta = read.csv("~/R/R files/2021-11-22 All Metadata 16S.csv",
+                   header = T) 
+ITSMeta = read.csv("~/R/R files/2021-11-22 All Metadata ITS.csv",
+                   header = T)
+
+BacMeta = as.data.frame(BacMeta)
+ITSMeta = as.data.frame(ITSMeta)
+
+#BacMeta = BacMeta[,-1] #BacMeta[-c(129),] #128 samples + 1 row for headers
+#ITSMeta = ITSMeta[,-1] #ITSMeta[-c(129),]
+
+BacMeta.temp <- BacMeta[,-1] #change column 1 to an index column
+rownames(BacMeta.temp) <- BacMeta[,1]
+BacMeta = BacMeta.temp
+
+ITSMeta.temp <- ITSMeta[,-1] #change column 1 to an index column
+rownames(ITSMeta.temp) <- ITSMeta[,1]
+ITSMeta = ITSMeta.temp
+
+sample_data(ps16S) = BacMeta
+sample_data(psITS) = ITSMeta
+
+#meta$PestCon = gsub("Pesticide 1", "Pest.Organic", meta$PestCon)
+#meta$PestCon = gsub("Pesticide 2", "Pest.Conventional", meta$PestCon)
+
+#meta$FertCon = gsub("Fertility 1", "Fert.Organic", meta$FertCon)
+#meta$FertCon = gsub("Fertility 2", "Fert.Conventional", meta$FertCon)
+
+#meta$Rot.2017 = gsub("Clover", "Fert.Conventional", meta$Rot.2017)
+#meta$Rot.2017 = gsub("W-Barley", "Fert.Organic", meta$Rot.2017)
+
+
+
+saveRDS(ps16S, file = "~/R/R files/ps16S.rds")
+saveRDS(psITS, file = "~/R/R files/psITS.rds")
+
+#metagMisc package used due to compatibility with phyloseq 
+phylo16S.css = phyloseq_transform_css(ps16S, norm = TRUE, log = F) 
+phyloITS.css = phyloseq_transform_css(psITS, norm = TRUE, log = F) 
+
+phylo16S.css@otu_table = t(phylo16S.css@otu_table)
+phyloITS.css@otu_table = t(phyloITS.css@otu_table)
+
+saveRDS(phylo16S.css, file = "~/R/R files/phylo16S.rds")
+saveRDS(phyloITS.css, file = "~/R/R files/phyloITS.rds")
+
+
+#saveRDS(phylo16S.css, file = "D:/phylo16S.rds")
+#saveRDS(phyloITS.css, file = "D:/phyloITS.rds")
+```
+
+## Load in files if feeling lazy
+```{r, cache=FALSE}
+ps16S = readRDS("~/R/R files/ps16S.rds")
+psITS = readRDS("~/R/R files/psITS.rds")
+
+phylo16S.css = readRDS("~/R/R files/phylo16S.rds")
+phyloITS.css = readRDS("~/R/R files/phyloITS.rds")
+```
+
+## Subset the data
+
+Subset by experiment and create a split-plot subset containing only experiments 1, 3, and 4 (!=2). Then all empty ASVs are removed to decrease file size and complexity. Due to some issues downstream with RDA analysis not working well with the CSS normalisation method, I have decided to keep the original data and pre-process it in the same manner. Hellinger normalisation is used in these cases for compatibility's sake rather than any statistically sound reason. 
+
+Raw dataset
+```{r, cache=FALSE}
+library(phyloseq)
+
+ps16S.ex2 = subset_samples(ps16S, Experiment=="2")
+psITS.ex2 = subset_samples(psITS, Experiment=="2")
+ps16S.ex2 = prune_taxa(taxa_sums(ps16S.ex2)>0, ps16S.ex2)
+psITS.ex2 = prune_taxa(taxa_sums(psITS.ex2)>0, psITS.ex2)
+
+```
+
+CSS normalised datasets
+```{r, cache=FALSE}
+
+phylo16S.ex2 = subset_samples(phylo16S.css, Experiment=="2")
+phyloITS.ex2 = subset_samples(phyloITS.css, Experiment=="2")
+phylo16S.ex2 = prune_taxa(taxa_sums(phylo16S.ex2)>0, phylo16S.ex2)
+phyloITS.ex2 = prune_taxa(taxa_sums(phyloITS.ex2)>0, phyloITS.ex2)
+
+```
+
+
+# Basic Statistics
+
+```{r}
+phylo = ps
+phylo = ps16S.ex2
+phylo2 = psITS.ex2
+
+ntaxa(phylo)
+min(sample_sums(phylo))
+
+get_taxa_unique(phylo, "Phylum")
+length(get_taxa_unique(phylo2, "Class"))
+length(get_taxa_unique(phylo2, "Order"))
+length(get_taxa_unique(phylo2, "Family"))
+length(get_taxa_unique(phylo2, "Genus"))
+length(get_taxa_unique(phylo2, "Species"))
+
+summarize_phyloseq(phylo)
+
+rank_names(phylo)
+top_taxa(phylo, n = 10)
+
+```
+
+
+
+
+# Alpha Diversity
+
+
+
+## Faith's PD
+### Bacteria 
+
+#### Organic
+```{r}
+phylo = phylo16S.ex2
+meta = data.frame(sam_data(phylo))
+
+FaithPD = estimate_pd(phylo)
+FaithPD
+
+sums = sample_sums(phylo)
+
+#add Faith PD and SR to the meta dataframe
+meta$PD = FaithPD$PD
+meta$SR = FaithPD$SR
+meta$Sum = sums
+
+#regression analysis of PD and SR against reads per sample
+model.PDxReads = lm(FaithPD$PD ~ sums)
+summary(model.PDxReads)
+
+
+model.PDxReads = lm(FaithPD$SR ~ sums)
+summary(model.PDxReads)
+
+#ANOVA
+PD.lme = lme(PD~Fertility*Pesticide,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(PD.lme)
+#qqnorm(PD.lme,~resid(.))
+
+SR.lme = lme(SR~Fertility*Pesticide,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(SR.lme)
+#qqnorm(SR.lme,~resid(.))
+
+
+cross = get_comparisons(meta, FertCon)
+p1 <- ggviolin(meta, x = "FertCon", y = "Sum",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "FertCon", y = "PD",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "FertCon", y = "SR",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+
+
+cross = get_comparisons(meta, FHCon)
+p1 <- ggviolin(meta, x = "FHCon", y = "Sum",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "FHCon", y = "PD",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "FHCon", y = "SR",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+
+cross = get_comparisons(meta, PestCon)
+p1 <- ggviolin(meta, x = "PestCon", y = "Sum",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "PestCon", y = "PD",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+p1 <- ggviolin(meta, x = "PestCon", y = "SR",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+
+
+```
+
+
+### Fungi
+
+
+#### Organic
+```{r}
+phylo = psITS.ex2
+meta = data.frame(sam_data(phylo))
+
+FaithPD = estimate_pd(phylo)
+FaithPD
+
+sums = sample_sums(phylo)
+
+#add Faith PD and SR to the meta dataframe
+meta$PD = FaithPD$PD
+meta$SR = FaithPD$SR
+meta$Sum = sums
+
+#regression analysis of PD and SR against reads per sample
+model.PDxReads = lm(FaithPD$PD ~ sums)
+summary(model.PDxReads)
+
+
+model.PDxReads = lm(FaithPD$SR ~ sums)
+summary(model.PDxReads)
+
+#ANOVA
+PD.lme = lme(PD~Fertility*Pesticide,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(PD.lme)
+#qqnorm(PD.lme,~resid(.))
+
+SR.lme = lme(SR~Fertility*Pesticide,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(SR.lme)
+#qqnorm(SR.lme,~resid(.))
+
+cross = get_comparisons(meta, FertCon)
+p1 <- ggviolin(meta, x = "FertCon", y = "Sum",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, FertCon)
+p1 <- ggviolin(meta, x = "FertCon", y = "PD",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, FertCon)
+p1 <- ggviolin(meta, x = "FertCon", y = "SR",
+ add = "boxplot", fill = "FertCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+
+
+cross = get_comparisons(meta, FHCon)
+p1 <- ggviolin(meta, x = "FHCon", y = "Sum",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, FHCon)
+p1 <- ggviolin(meta, x = "FHCon", y = "PD",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, FHCon)
+p1 <- ggviolin(meta, x = "FHCon", y = "SR",
+ add = "boxplot", fill = "FHCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+
+
+cross = get_comparisons(meta, PestCon)
+p1 <- ggviolin(meta, x = "PestCon", y = "Sum",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, PestCon)
+p1 <- ggviolin(meta, x = "PestCon", y = "PD",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+cross = get_comparisons(meta, PestCon)
+p1 <- ggviolin(meta, x = "PestCon", y = "SR",
+ add = "boxplot", fill = "PestCon", palette = ColourScheme) + stat_compare_means(comparisons = cross)  
+print(p1)
+```
+
+
+```{r}
+phylo = ps16S.ex2
+plot_richness(phylo, x="FertCon", measures=c("Chao1", "Shannon", "Simpson"))
+```
+
+
+```{r}
+plot_violin(ps16S.ex2, "PestCon")
+```
+
+
+
+
+
+```{r, error = TRUE}
+phylo = phyloITS.ex2
+
+pseq <- phylo %>%
+   aggregate_taxa(level = "Phylum") %>%
+   transform(transform = "compositional")
+
+pseq.merge = pseq
+{pseq.other = prune_taxa(taxa_sums(pseq) < 0.05, pseq)
+tax.temp = as.data.frame(pseq.other@tax_table)
+otherNames = as.vector(tax.temp$Phylum)
+
+pseq.merge = merge_taxa(pseq.merge, otherNames, archetype = 1)
+
+index = as.integer(which(taxa_names(pseq.merge) == otherNames[1]))
+taxa_names(pseq.merge)[index] = "Other Taxa <1%"}
+
+
+View(pseq.merge@otu_table)
+
+
+
+sum(sort(rowMeans(pseq.merge@otu_table)*100)[1:10])
+
+
+jpeg(file = "~/R/R files/Images/Bacteria by Block.jpeg", width = 4000, height = 2000)
+p <- plot_composition(pseq.merge, group_by = "Block") + scale_fill_manual(values = ColourScheme) +
+  theme(legend.position="bottom", text = element_text(size = 72)) + guides(fill=guide_legend(title="Phyla")) 
+p
+dev.off()
+
+
+
+
+
+p <- plot_composition(pseq.merge) + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+p <- plot_composition(pseq.merge, group_by = "Block") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+p <- plot_composition(pseq.merge, group_by = "FertCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+
+p <- plot_composition(pseq.merge, group_by = "PestCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+
+p <- plot_composition(pseq.merge, group_by = "FHCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+```
+
+
+
+```{r, error = TRUE}
+phylo = phyloITS.ex2
+
+pseq <- phylo %>%
+   aggregate_taxa(level = "Family") %>%
+   transform(transform = "compositional")
+
+{pseq.merge = pseq
+pseq.other = prune_taxa(taxa_sums(pseq) < 0.01, pseq) 
+tax.temp = as.data.frame(pseq@tax_table)
+otherNames = as.vector(tax.temp$Family)
+pseq.merge = merge_taxa(pseq.merge, otherNames, archetype = 1)
+index = as.integer(which(taxa_names(pseq.merge) == otherNames[1]))
+taxa_names(pseq.merge)[index] = "Other Taxa <1%"}
+
+
+sort(rowMeans(pseq.merge@otu_table)*100)[1:10]
+
+
+jpeg(file = "~/R/R files/Images/FamilyFungi.jpeg", width = 4000, height = 2000)
+p <- plot_composition(pseq.merge, group_by = "Block") + scale_fill_manual(values = ColourScheme) +
+  theme(legend.position="bottom", text = element_text(size = 72)) + guides(fill=guide_legend(title="Phyla")) 
+p
+dev.off()
+
+
+
+
+
+
+
+p <- plot_composition(pseq.merge) + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+p <- plot_composition(pseq.merge, group_by = "TillCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+p <- plot_composition(pseq.merge, group_by = "FertCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+
+
+p <- plot_composition(pseq.merge, group_by = "PestCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+
+p <- plot_composition(pseq.merge, group_by = "FHCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+p <- plot_composition(pseq.merge, group_by = "ExCon") + scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom")  
+p
+
+
+
+```
+
+
+# Beta Diversity
+
+## UniFrac Unweighted and Weighted
+
+### Factors 
+
+#### Bacteria
+
+*UniFrac Analysis of Bacteria within the soil community of Split Plots*
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+
+phylo = phylo16S.ex2
+meta = data.frame(phylo@sam_data)
+
+wunifrac_dist = phyloseq::distance(phylo, method="unifrac", weighted=F)
+wunifrac2_dist  = phyloseq::distance(phylo, method="unifrac", weighted=T)
+
+print("Bacteria Organic Plots, Unweighted UniFrac")
+
+set.seed(13);ad1=adonis(wunifrac_dist~Fertility*Pesticide*Rot.2017, random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+a.table1=ad1$aov.tab
+data.frame(a.table1)
+
+print("Bacteria Organic Plots, Weighted UniFrac, Tillage")
+
+set.seed(13);ad2=adonis(wunifrac2_dist~Fertility*Pesticide*Rot.2017,random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+data.frame(ad2$aov.tab)[,-1]
+
+```
+
+#### Fungi 
+
+*UniFrac Analysis of Fungi within the soil community of Split Plots*
+```{r message=FALSE, warning=FALSE, paged.print=TRUE, echo=F}
+
+phylo = phyloITS.ex2
+meta = data.frame(phylo@sam_data)
+
+wunifrac_dist = phyloseq::distance(phylo, method="unifrac", weighted=F)
+wunifrac2_dist  = phyloseq::distance(phylo, method="unifrac", weighted=T)
+
+print("Bacteria Organic Plots, Unweighted UniFrac")
+
+set.seed(13);ad1=adonis(wunifrac_dist~Fertility*Pesticide*Rot.2017, random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+a.table1=ad1$aov.tab
+data.frame(a.table1)
+
+print("Bacteria Organic Plots, Weighted UniFrac, Tillage")
+
+set.seed(13);ad2=adonis(wunifrac2_dist~Fertility*Pesticide*Rot.2017,random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+data.frame(ad2$aov.tab)[,-1]
+
+```
+
+
+
+### Chemical and Physical
+
+### Bacteria 
+
+#### Bacteria Organic
+
+*UniFrac Analysis of Bacteria within the soil community of Split Plots*
+```{r message=FALSE, warning=FALSE, paged.print=TRUE}
+
+phylo1 = phyloITS.ex2
+meta1 = data.frame(phylo1@sam_data)
+
+
+
+#phylo = phylo1
+#meta = meta1
+
+
+meta = meta1[meta1$PlotID!=46,]
+phylo = subset_samples(phylo1, PlotID != 46)
+
+wunifrac_dist = phyloseq::distance(phylo, method="unifrac", weighted=F)
+wunifrac2_dist  = phyloseq::distance(phylo, method="unifrac", weighted=T)
+
+#meta$CN = meta$Carbon/meta$Nitrogen
+grouped = cbind(meta$pH)
+rownames(grouped) = rownames(meta)
+PhosFrame = grouped
+PhosDist = vegdist(PhosFrame, method = "euclidean")
+
+print("Bacteria Organic Plots, Unweighted Mantel")
+
+set.seed(13);abund_Phos = mantel(wunifrac_dist, PhosDist, method = "spearman", permutations = 10000, na.rm = TRUE)
+abund_Phos
+
+print("Bacteria Organic Plots, Weighted Mantel")
+
+set.seed(13);abund_Phos = mantel(wunifrac2_dist, PhosDist, method = "spearman", permutations = 10000, na.rm = TRUE)
+abund_Phos
+
+
+
+```
+
+
+
+
+
+
+
+
+```{r}
+## Do mantel test on the functional predictions
+allarray = as.data.frame(readRDS("~/R/R files/2022-04-20 Full Protein Table.rds"))
+cln = colnames(read.csv("~/R/R files/2022-04-21 Full Protein Table Normalised.csv"))[-1]
+cln = gsub(pattern = "X16S.", replacement = "16S-", cln)
+colnames(allarray)=cln
+arrayTax = as.data.frame(allarray[,-{1:7}])
+arrayOrg = arrayTax[,c(which(colnames(arrayTax) %in% rownames(meta)))]
+
+arrayOrgt = as.data.frame(as.numeric(unlist(t(arrayOrg))))
+
+
+array.dist = vegdist(arrayOrgt, method = "euclidean")
+array.dist
+
+
+
+abund_Phos = mantel(wunifrac_dist, array.dist, method = "spearman", permutations = 1, na.rm = TRUE)
+abund_Phos
+
+
+abund_Phos = mantel(wunifrac2_dist, array.dist, method = "spearman", permutations = 10, na.rm = TRUE)
+abund_Phos
+
+```
+
+### Fungi 
+
+*UniFrac Analysis of Fungi within the soil community of Split Plots*
+```{r message=FALSE, warning=FALSE, paged.print=TRUE, echo=F}
+
+phylo = phyloITS.ex2
+meta = data.frame(phylo@sam_data)
+
+wunifrac_dist = phyloseq::distance(phylo, method="unifrac", weighted=F)
+wunifrac2_dist  = phyloseq::distance(phylo, method="unifrac", weighted=T)
+
+
+print("Bacteria Organic Plots, Unweighted UniFrac")
+
+set.seed(13);ad1=adonis(wunifrac_dist~Nitrogen*Carbon*Phosphorus*MoistureCont, random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+a.table1=ad1$aov.tab
+data.frame(a.table1)[,-1]
+
+print("Bacteria Organic Plots, Weighted UniFrac, Tillage")
+
+set.seed(13);ad2=adonis(wunifrac2_dist~Nitrogen*Carbon*Phosphorus*MoistureCont, random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+data.frame(ad2$aov.tab)[,-1]
+
+```
+
+
+
+```{r}
+library(nlme)
+library(lsmeans)
+library(multcomp)
+
+se = function(x) sqrt(var(x)/length(x))
+
+phylo = phyloITS.ex2
+meta = data.frame(phylo@sam_data)
+meta$Potassium
+
+meta$PestCon = gsub("Pesticide 1", "Pest.Organic", meta$PestCon)
+meta$PestCon = gsub("Pesticide 2", "Pest.Conventional", meta$PestCon)
+
+meta$FertCon = gsub("Fertility 1", "Fert.Organic", meta$FertCon)
+meta$FertCon = gsub("Fertility 2", "Fert.Conventional", meta$FertCon)
+
+meta$Rot.2017 = gsub("Clover", "Rot.Conventional", meta$Rot.2017)
+meta$Rot.2017 = gsub("W-Barley", "Rot.Organic", meta$Rot.2017)
+
+
+#meta.k = meta[-10,]
+
+Nitro.lme = lme(Potassium~FertCon*PestCon*Rot.2017,data=meta,random=~1|Block/Fertility/Pesticide) # Block/rotation/pesticide
+anova(Nitro.lme)
+
+Carbon.lme = lme(Carbon~Fertility*Pesticide*Rot.2017,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(Carbon.lme)
+
+lsmeans(Nitro.lme, pairwise~PestCon*Rot.2017, adjust="Tukey")
+lsmeans(Carbon.lme, pairwise~Pesticide*Rot.2017, adjust="Tukey")
+
+Phos.lme = lme(Phosphorus~Pesticide*Rot.2017,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(Phos.lme)
+
+lsmeans(Phos.lme, pairwise~Fertility*Pesticide, adjust="Tukey")
+
+moist.lme = lme(MoistureCont~Fertility*Pesticide*Rot.2017,data=meta,random=~1|Block/Fertility/Pesticide)
+anova(moist.lme)
+
+```
+
+# PCoA, RDA
+```{r}
+library(microbiomeSeq)
+phylo = ps16S.ex2
+
+p<-plot_anova_diversity(phylo, method = c("richness","simpson", "shannon"),grouping_column =  "Rot.2017",pValueCutoff=0.05)
+print(p)
+
+p<-plot_anova_diversity(phylo, method = c("richness","simpson", "shannon"),grouping_column =  "RDSampleID",pValueCutoff=0.05)
+print(p)
+
+ord.res <- ordination(phylo,which_distance="bray",method="NMDS",grouping_column="Rot.2017",pvalue.cutoff=0.05)
+
+ord.res = ordinate(phylo, method = "NMDS", distance = "bray")
+
+
+
+
+```
+
+
+
+# Identification of Core Microbiome
+
+```{r}
+
+phylo = phylo16S.ex2
+
+phylo.16S.Glom=  tax_glom(phylo, "Genus", NArm = T)
+phylo.glom = phylo.16S.Glom
+
+# Core ASV 
+core.taxa.standard <- core_members(phylo.glom, detection = 0.001, prevalence = 50/100)
+taxonomy <- as.data.frame(tax_table(phylo.glom))
+
+# Subset this taxonomy table to include only core ASVs
+core_taxa_id <- subset(taxonomy, rownames(taxonomy) %in% core.taxa.standard)
+
+count = dim(core_taxa_id)[1]
+count = array(1:count)
+
+core_taxa_id.temp <- core_taxa_id[,-1]
+rownames(core_taxa_id.temp) <- paste0("Species ", count)
+core_taxa_id = core_taxa_id.temp
+
+print("Core Microbiome")
+core_taxa_id
+
+```
+
+
+# Dufrane-Legendre Indicator Species Index
+
+```{r, echo=F}
+print("Bacteria, Fertility")
+
+#Diagnostic ASV
+phylo = phylo16S.ex2
+phylo.16S.Glom=  tax_glom(phylo, "Family", NArm = T) ## Must be run to group
+phylo = phylo.16S.Glom
+phylo.data = data.frame(phylo@otu_table)
+meta = data.frame(phylo@sam_data)
+
+
+indval(phylo.data,meta$Fertility)-> indval.otu
+
+indval.t = indval.otu$indval
+
+## create indval output summary table
+gr <- indval.otu$maxcls[indval.otu$pval<=0.05]  ## which group the OTU is indicative of (group 1-?, it follows alphabetical ordering)
+iv <- indval.otu$indcls[indval.otu$pval<=0.05]  ## indicator value of 0 to 1, 1 being exclusive to its group
+pv <- indval.otu$pval[indval.otu$pval<=0.05]    ## pval
+qv <- p.adjust(indval.otu$pval,method="fdr")[indval.otu$pval<=0.05]  ## pval adjusted for false positives
+fr <- apply(phylo.data>0, 2, sum)[indval.otu$pval<=0.05]  ## frequency this OTU is present in all samples 
+sct <- colSums(phylo.data)[indval.otu$pval<=0.05]
+act <- colMeans(phylo.data)[indval.otu$pval<=0.05]
+indvalsummary <- data.frame( group=gr, indval=iv, pvalue=pv, fdr=qv, freq=fr, counts.sum=sct,counts.mean=act)
+indvalsummary <- indvalsummary[order(indvalsummary$group, -indvalsummary$indval),]
+
+taxonomy <- as.data.frame(tax_table(phylo))
+taxa_id <- subset(taxonomy, rownames(taxonomy) %in% rownames(indvalsummary))
+
+indvalsummary = merge(taxa_id, indvalsummary, by.x=0, by.y=0)
+
+View(indvalsummary[,-1]) #print data frame but exclude sequence to save space
+
+```
+
+
+
+
+# Functional Analysis
+
+## Pathway analysis
+```{r}
+
+dataset = as.data.frame(t(readRDS("~/R/R files/pathmeta.RData")))
+phylo = ps16S
+meta = data.frame(sample_data(phylo))
+
+jaccard2.d=vegdist(dataset, method="jaccard", binary = FALSE)
+set.seed(13);ad5=adonis(jaccard2.d~Fertility*Rot.2017*Phosphorus*MoistureCont*Carbon*Nitrogen,random=~1|Block/Fertility/Pesticide, data=meta,permutations=10000)
+
+ad5$aov.tab
+
+
+```
+
+
+## Pathway analysis MANOVA
+```{r}
+
+my_data1 = read.csv("~/R/R files/T_sub_path.csv")
+my_data1<-my_data1[(my_data1$Experiment=="2"),]
+phylo = phylo16S.ex2
+meta = data.frame(phylo@sam_data)
+my_data1$Rot.2017 = meta$Rot.2017
+test = 1/(my_data1$Citrate.cycle..TCA.cycle.)
+my_data = my_data1 #separated so that we don't double dip
+my_data[,33:79] = my_data1[,33:79]*test
+
+#do an RDA 
+#my_data = my_data[(my_data$Carbon < 2.5),]
+my_data$Nitrogen[17:30] = my_data1$Nitrogen[17:30] - 0.25
+
+#names = as.matrix(my_data[48:49])                 #my_data[33:60])
+
+
+
+name = my_data[45]
+Nitrogen.lme = lme(Nitrogen.metabolism~Fertility*Pesticide*Rot.2017,data=my_data,random=~1|Block/Rot.2017/Pesticide)
+anova(Nitrogen.lme)
+
+
+
+
+i
+target = my_data
+for( i in c(33:47,49:79)){
+ target$target = my_data[,i] 
+ target.lme = lme(target~Fertility*Pesticide*Rot.2017,data=target,random=~1|Block/Rot.2017/Pesticide/Fertility)
+ obj = anova(target.lme)
+   rownames(obj)[1] = strtrim(colnames(my_data)[i],30)
+print(obj)
+  
+}
+
+```
+
+```{r}
+my_data = read.csv("~/R/R files/T_sub_path.csv")
+my_data<-my_data[(my_data$Experiment=="2"),]
+my_data = my_data[(my_data$Carbon < 2.5),]
+my_data$Nitrogen[1:16] = my_data$Nitrogen[1:16] + 0.25
+my_data$Nitrogen = my_data$Nitrogen*1000
+my_data$Carbon = my_data$Carbon*1000
+
+data = my_data
+test = 1/(data$Citrate.cycle..TCA.cycle.)
+data[,33:79] = data[,33:79]*test
+
+data$MoistureCont=data$MoistureCont*100
+
+
+
+
+p1 = ggplot(data, aes(x=MoistureCont, y=Nitrogen.metabolism)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Nitrogen Metabolism by Moisture Content (%) in Organic Samples") +
+  xlab("Soil Moisture Content (%)") + ylab("Nitrogen Metabolism") + stat_cor(method = "kendall") 
+
+p2 = ggplot(data, aes(x=Nitrogen, y=Nitrogen.metabolism)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Nitrogen Metabolism by Nitrogen Content (%) in Organic Samples") +
+  xlab("Nitrogen mg/kg") + ylab("Nitrogen Metabolism") + stat_cor(method = "kendall")
+
+p3 = ggplot(data, aes(x=MoistureCont, y=Starch.and.sucrose.metabolism)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Starch and Sugar Metabolism by Moisture Content (%) in Organic Samples") +
+  xlab("Soil Moisture Content (%)") + ylab("Starch and Sugar Metabolism") + stat_cor(method = "kendall") 
+
+p4 = ggplot(data, aes(x=MoistureCont, y=Carbon.metabolism)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Carbon Metabolism by Moisture Content (%) in Organic Samples") +
+  xlab("Soil Moisture Content (%)") + ylab("Carbon Metabolism") + stat_cor(method = "kendall") 
+
+p5 = ggplot(data, aes(x=MoistureCont, y=Plant.pathogen.interaction)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Plant Pathogen Interaction by Moisture Content (%) in Organic Samples") +
+  xlab("Soil Moisture Content (%)") + ylab("Plant Pathogen Interaction") + stat_cor(method = "kendall") 
+
+p6 = ggplot(data, aes(x=Phosphorus, y=Plant.pathogen.interaction)) +
+  geom_point() +
+  geom_smooth(method=lm, se=FALSE) + ggtitle("Plant Pathogen Interaction by Soil Phosphorus (mg/kg) in Organic Samples") +
+  xlab("Phosphorus (mg/kg)") + ylab("Plant Pathogen Interaction") + stat_cor(method = "kendall") 
+
+tp = grid.arrange(p1, p2, p3, p4, p5, p6, nrow = 3)
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# PCoA/MDS
+## Bacteria
+PCoA using Bray-Curtis dissimilarity Bacteria, this step is purely exploratory 
+to find any groupings for further analysis. These plots use MDS ordination and 
+are separately coloured based on different discrete factors. 
+ 
+### Bacteria Split
+
+```{r}
+phylo = phylo16S.split
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "unifrac")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Bacteria Experiment 1
+
+```{r echo=FALSE}
+phylo = phylo16S.ex1
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Bacteria Experiment 2 (Organic)
+```{r echo=FALSE}
+phylo = phylo16S.ex2
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index ### P index has not been carried out on these soils yet
+#plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+#                  shape = "PindexCon") +
+#  labs(col = "P index", shape = "P index")+
+#  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Bacteria Experiment 3
+```{r echo=FALSE}
+phylo = phylo16S.ex3
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Bacteria Experiment 4
+```{r echo=FALSE}
+phylo = phylo16S.ex4
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+## Fungi
+Now we redo these with fungi
+
+### Fungi Split
+```{r echo=FALSE}
+phylo = phyloITS.split
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.pcoa.log, color = "ExCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Fungi Experiment 1
+```{r echo=FALSE}
+phylo = phyloITS.ex1
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+```
+
+### Fungi Experiment 2 (Organic)
+```{r echo=FALSE}
+phylo = phyloITS.ex2
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Block
+plot_ordination(phylo, out.pcoa.log, color = "BlockCon",
+                  shape = "BlockCon") +
+  labs(col = "Block", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#P index and P index ### P index has not been carried out on these soils yet
+#plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+#                  shape = "PindexCon") +
+#  labs(col = "P index", shape = "P index")+
+#  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+
+
+
+### Fungi Experiment 3
+```{r echo=FALSE}
+phylo = phyloITS.ex3
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+### Fungi Experiment 4
+```{r echo=FALSE}
+phylo = phyloITS.ex4
+
+out.pcoa.log <- ordinate(phylo,  method = "MDS", distance = "bray")
+evals <- out.pcoa.log$values[,1]
+
+#Fertility and Tillage
+plot_ordination(phylo, out.pcoa.log, color = "FertCon",
+                  shape = "TillCon") +
+  labs(col = "Fertility Treatment", shape = "Tillage Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and P index
+plot_ordination(phylo, out.pcoa.log, color = "PindexCon",
+                  shape = "BlockCon") +
+  labs(col = "Experiment", shape = "Block")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+
+#Pesticides and FH
+plot_ordination(phylo, out.pcoa.log, color = "FHCon",
+                  shape = "PestCon") +
+  labs(col = "Fertility:Pesticide", shape = "Pesticide Type")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+
+
+# MDS/PCA of continuous variables 
+These PCA plots use the non-discrete variables such as Olsen's P or pH using the
+same ordination method as above. 
+
+## Bacteria
+
+### Bacteria Split
+```{r}
+phylo = phylo16S.split
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Bacterial Split Plots, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Bacterial Split Plots, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4)
+```
+
+### Bacteria Experiment 1
+```{r echo=FALSE}
+phylo = phylo16S.ex1
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Bacterial Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Bacterial Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Moisture", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Bacterial Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "SPADavg", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Bacterial Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Bacterial Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "AGBiomass", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+### Bacteria Experiment 2 THESE SOILS NEED TO BE FOUND
+```{r echo=FALSE}
+phylo = phylo16S.ex2
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 2, Bacteria, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+### Bacteria Experiment 3
+```{r echo=FALSE}
+phylo = phylo16S.ex3
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 3, Bacteria, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Experiment 3, Bacteria, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+```
+ 
+### Bacteria Experiment 4
+```{r echo=FALSE}
+phylo = phylo16S.ex4
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 4, Bacteria, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Experiment 4, Bacteria, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+
+## Fungi
+
+### Fungi Split
+```{r echo=FALSE}
+phylo = phyloITS.split
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Fungi Split Plots, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Fungi Split Plots, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4)
+```
+
+### Fungi Experiment 1
+```{r echo=FALSE}
+phylo = phyloITS.ex1
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Fungal Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Fungal Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Moisture", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Fungal Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "SPADavg", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Fungal Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Fungal Experiment 1, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "AGBiomass", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+### Fungi Experiment 2 THESE SOILS NEED TO BE FOUND
+```{r echo=FALSE}
+phylo = phyloITS.ex2
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 2, Fungi, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+### Fungi Experiment 3
+```{r echo=FALSE}
+phylo = phyloITS.ex3
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 3, Fungi, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Experiment 3, Fungi, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+### Fungi Experiment 4
+```{r echo=FALSE}
+phylo = phyloITS.ex4
+
+phylo.ord = ordinate(phylo, method = "MDS", distance = "bray")
+
+p4title = "Experiment 4, Fungi, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "Phosphorus", 
+    title = p4title) + geom_point(size = 4) 
+
+p4title = "Experiment 4, Fungi, PCoA/MDS ordination on Bray-Curtis distance"
+plot_ordination(phylo, phylo.ord, "samples", color = "pH", 
+    title = p4title) + geom_point(size = 4) 
+```
+
+
+# RDA
+
+## Bacteria
+Instead of using CSS normalisation we will transform the data by Hellinger. This
+is purely due to compatibility issues rather than any statistically motivated 
+reason. 
+Look up differences in distances https://stats.stackexchange.com/questions/80377/which-distance-to-use-e-g-manhattan-euclidean-bray-curtis-etc
+ 
+
+### Bacterial split
+```{r message=FALSE, warning=FALSE}
+phylo = ps16S.split
+
+spe.hel <- decostand(phylo@otu_table, "hellinger") 
+#we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+# looking at the raw code, this is plotting the 'wa scores', the blue dots 
+#are different species  
+
+ggord(simpleRDA, phylo.samp$ExCon, xlims = c(-1.5,1), ylims=c(-1,0.75)) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_x_continuous(limits = c(-1.5, 1)) +
+  scale_y_continuous(limits = c(-1, 0.75))
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_x_continuous(limits = c(-1.5, 1)) +
+  scale_y_continuous(limits = c(-1, 0.75))
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_x_continuous(limits = c(-1.5, 1)) +
+  scale_y_continuous(limits = c(-1, 0.75))
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_x_continuous(limits = c(-1.5, 1)) +
+  scale_y_continuous(limits = c(-1, 0.75))
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) + scale_x_continuous(limits = c(-1.5, 1)) +
+  scale_y_continuous(limits = c(-1, 0.75))
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+ 
+### Bacteria experiment 1
+```{r echo=FALSE}
+phylo = ps16S.ex1
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + AvgMoisture + AGBiomass + SPADavg + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Bacteria experiment 2
+```{r echo=FALSE}
+phylo = ps16S.ex2
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Bacteria Experiment 3
+```{r echo=FALSE}
+phylo = ps16S.ex3
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Bacteria Experiment 4
+```{r echo=FALSE}
+phylo = ps16S.ex4
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+## Fungi
+
+### Fungal split
+```{r echo=FALSE}
+phylo = psITS.split
+
+spe.hel <- decostand(phylo@otu_table, "hellinger") 
+#we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Fungi experiment 1
+```{r echo=FALSE}
+phylo = psITS.ex1
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + AvgMoisture + AGBiomass + SPADavg + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Fungi experiment 2
+```{r echo=FALSE}
+phylo = psITS.ex2
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Fungi Experiment 3
+```{r echo=FALSE}
+phylo = psITS.ex3
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+### Fungi Experiment 4
+```{r echo=FALSE}
+phylo = psITS.ex4
+spe.hel <- decostand(phylo@otu_table, "hellinger") #we use a hellinger transformation on the non-CSS data here, which is good because it doesn't work with the CSS data 
+
+phylo.samp = phylo@sam_data
+phylo.samp = data.frame(phylo.samp)
+#poly()
+simpleRDA <- rda(spe.hel ~ Tillage + Fertility + Pesticide + pH + Phosphorus + MoistureCont + Old.pH, data = phylo.samp )
+options(max.print=100) #default is 1000
+simpleRDA[["CA"]][["eig"]] #summary(simpleRDA) if you want to see the whole thing
+screeplot(simpleRDA) #bstick not available for constrained ordinations
+
+# canonical coefficients
+coef(simpleRDA)
+
+# unadjusted R^2 retreived from the rda result
+R2 <- RsquareAdj(simpleRDA)$r.squared
+print(paste0("[R2] ", R2))
+
+# adjusted R^2
+R2adj <- RsquareAdj(simpleRDA)$adj.r.squared
+print(paste0("[R2adj] ", R2adj))
+
+# Triplot: three different entities in the plot: sites, response variables and explanatory variables (arrowheads are on the explanatory variables)
+# Scaling 1
+plot(simpleRDA, scaling=1, main="Triplot RDA matrix ~ env - scaling 1 - wa scores")
+
+# arrows for species are missing, so lets add them without heads so they look different than the explanatory variables
+spe.sc <- scores(simpleRDA, choices=1:2, scaling=1, display="sp")
+arrows(0,0,spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+######
+
+# Scaling 2 scores() choices= indicates which axes are to be selected, make sure to specify the scaling if its different than 2 
+plot(simpleRDA, main="Triplot RDA matrix ~ env - scaling 2 - wa scores"); spe2.sc <- scores(simpleRDA, choices=1:2, display="sp"); arrows(0,0,spe2.sc[,1], spe2.sc[,2], length=0, lty=1, col='red')
+
+#Groupings
+# plot the RDA using ggplot (ggord package)
+ggord(simpleRDA, phylo.samp$ExCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank()) # looking at the raw code, this is plotting the 'wa scores', the blue dots are different species  
+
+ggord(simpleRDA, phylo.samp$BlockCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$TillCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FertCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$PestCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+ggord(simpleRDA, phylo.samp$FHCon) + theme(panel.grid.major = element_blank(), panel.grid.minor = element_blank())
+
+
+# site scores as linear combinations of the environmental variables 
+# Scaling 1
+plot(simpleRDA, scaling=1, display=c("lc", "sp", "cn"), main="Triplot RDA matrix ~ env -scaling 1- lc scores"); arrows(0,0, spe.sc[,1], spe.sc[,2], length=0, lty=1, col='red')
+
+```
+
+
+# Heatmaps
+Test to see which is the best taxonomic level to display to, as well as choosing the top n to display for each. n=25 seems to be the most that can fit comfortably on the graph. Taxa identified as "Unknown" can be optionally included by # the second line of each grouping. I am arbritrarily going with Family because it always seems to be a good option. 
+
+## Bacterial split
+```{r}
+phylo = phylo16S.split
+
+# Phylum----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Phylum!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Phylum")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Phylum"], sum), TRUE)
+top.phyla = top.phyla[1:25] # [1:n] choose the top n of the chosen taxon level
+
+GP2 = subset_taxa(phylo2, Phylum %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Phylum")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Phylum")
+
+# Class----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Class!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Class")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Class"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Class %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Class")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Class")
+
+# Order----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Order!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Order")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Order"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Order %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Order")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Order")
+
+# Family----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Family!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Family")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Family"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Family %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Family")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Family")
+
+# Genus----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Genus!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Genus")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Genus"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Genus %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Genus")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Genus")
+
+```
+
+## Fungal Split
+```{r echo=FALSE}
+phylo = phyloITS.split
+
+# Phylum----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Phylum!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Phylum")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Phylum"], sum), TRUE)
+top.phyla = top.phyla[1:25] # [1:n] choose the top n of the chosen taxon level
+
+GP2 = subset_taxa(phylo2, Phylum %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Phylum")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Phylum")
+
+# Class----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Class!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Class")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Class"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Class %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Class")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Class")
+
+# Order----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Order!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Order")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Order"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Order %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Order")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Order")
+
+# Family----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Family!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Family")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Family"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Family %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Family")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Family")
+
+# Genus----
+phylo2 = phylo
+phylo2 = subset_taxa(phylo, Genus!="Unknown") #excludes Unknown in taxon level
+phylo2 = aggregate_taxa(phylo2, "Genus")
+
+top.phyla = sort(tapply(taxa_sums(phylo2), tax_table(phylo2)[, "Genus"], sum), TRUE)
+top.phyla = top.phyla[1:25]
+
+GP2 = subset_taxa(phylo2, Genus %in% names(top.phyla)) # Prune to just the most-abundant 5 phyla
+get_taxa_unique(GP2, "Genus")
+
+#GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2) # Prune further, to top 200 most abundant taxa of top 5 phyla
+plot_heatmap(GP2, "NMDS", "bray", "RDSampleID", "Genus")
+
+```
+
+
+
+# Misc testing
+## Networking
+
+```{r}
+phylo = phylo16S.ex1
+ig = make_network(phylo, type = "samples", distance = "bray", max.dist = 0.9)
+plot_network(ig, phylo, color = "BlockCon", shape = "TillCon", line_weight = 0.4, 
+    label = NULL)
+```
+
+```{r}
+phylo = phylo16S.ex1
+phylo = subset_taxa(phylo, Family!="NA") #make sure that this uses the same taxon as the colour in the plot_network function
+# prune to just the top 100 most abundant OTUs across all samples (crude).
+GP100 = prune_taxa(names(sort(taxa_sums(phylo), TRUE))[1:100], phylo) #the [1:n] shows the top n ASV
+jg = make_network(GP100, "taxa", "jaccard", 0.65) #change the last number to reduce/increase linkages
+plot_network(jg, GP100, "taxa", color = "Family", line_weight = 0.4, label = NULL)
+```
+
+## Ordination
+
+These plots are so ugly I can not allow them to exist
+```{r}
+phylo = phylo16S.ex1
+phylo = subset_taxa(phylo, Family!="NA") #excludes NA in taxon level
+GP100 = prune_taxa(names(sort(taxa_sums(phylo), TRUE))[1:100], phylo) #the [1:n] shows the top n ASV
+
+GP.MDS = ordinate(GP100, method = "MDS", distance = "unifrac")
+ptitle = "GP PCoA of UniFrac distance, GP most abundant 100 OTUs only"
+p = plot_ordination(GP100, GP.MDS, type = "samples", color = "FertCon", title = ptitle)
+p + geom_point(size = 5) + geom_polygon(aes(fill = FertCon))
+
+top.phyla = sort(tapply(taxa_sums(phylo), tax_table(phylo)[, "Phylum"], sum), TRUE)
+top.phyla = top.phyla[1:5]
+# Prune to just the most-abundant 5 phyla
+GP2 = subset_taxa(phylo, Phylum %in% names(top.phyla))
+get_taxa_unique(GP2, "Phylum")
+
+# Prune further, to top 200 most abundant taxa of top 5 phyla
+GP2 = prune_taxa(names(sort(taxa_sums(GP2), TRUE)[1:200]), GP2)
+p2 = plot_ordination(GP2, ordinate(GP2, "CCA"), type = "samples", color = "FertCon", title = ptitle)
+p2 + geom_point(size = 5) + geom_polygon(aes(fill = FertCon))
+```
+
+## DPCoA [Not working]
+```{r eval=FALSE}
+phylo = phyloITS.split
+  
+out.dpcoa.log <- ordinate(phylo, method = "DPCoA")
+
+save(out.dpcoa.log, file = "H:/PhD/R library/Files/DPCoA/itsSplit.rdata")
+out.dpcoa.log = load("H:/PhD/R library/Files/DPCoA/itsSplit.rdata")
+
+evals <- out.dpcoa.log$eig
+
+#Fertility and Tillage
+plot_ordination(phylo, out.dpcoa.log, color = "FertCon", label= "SampleID",
+                  shape = "TillCon") +
+  labs(col = "Fertility", shape = "Tillage")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Block and Experiment
+plot_ordination(phylo, out.dpcoa.log, color = "BlockCon", label= "SampleID",
+                  shape = "ExCon") +
+  labs(col = "Block", shape = "Experiment")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#Pesticide and FH
+plot_ordination(phylo, out.dpcoa.log, color = "PestCon", label= "SampleID",
+                  shape = "FHCon") +
+  labs(col = "Pesticide", shape = "FH")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+
+#P index and P index
+plot_ordination(phylo, out.dpcoa.log, color = "PindexCon", label= "SampleID",
+                  shape = "PindexCon") +
+  labs(col = "P index", shape = "P index")+
+  coord_fixed(sqrt(evals[2] / evals[1]))
+```
+
+# Community Graphs (Merged)
+These graphs are created from merged data i.e. all No Till plots summed together 
+into a super-sample. I realised after doing it that I meant to group samples 
+together on the plot side by side. However, I think it is an interesting thing 
+to see despite the fact these will never be used anywhere. 
+
+
+
+```{r}
+phylo = phylo16S.split
+
+physeq2 = filter_taxa(phylo, function(x) mean(x) > 0.1, TRUE)
+physeq3 = transform_sample_counts(physeq2, function(x) x / sum(x) )
+
+
+stom <- psmelt(physeq3);print("#")
+
+glom <- tax_glom(physeq3, taxrank = 'Phylum')
+ # taxa as # phyla
+data <- psmelt(glom) # create dataframe from phyloseq object
+data$Phylum <- as.character(data$Phylum) #convert to character
+
+#simple way to rename phyla with < 1% abundance
+data$Phylum[data$Abundance < 0.01] <- "< 1% abund."
+
+#data[data$Phylum %in% remainder,]$Phylum <- "Phyla < 1% abund."
+#rename phyla with < 1% relative abundance
+data$Phylum[data$Abundance < 0.01] <- "Phyla < 1% abund."
+
+#plot with condensed phyla into "< 1% abund" category
+p <- ggplot(data=data, aes(x=Sample, y=Abundance, fill=Phylum))
+p + geom_bar(aes(), stat="identity", position="stack") +
+  scale_fill_manual(values = ColourScheme) +
+theme(legend.position="bottom") + guides(fill=guide_legend(nrow=5))
+
+```
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+
+# Functional analysis----
+
+## Fungi 
+### Download database
+```{r}
+parse_funguild <- function(url = 'http://www.stbates.org/funguild_db.php', tax_name = TRUE){
+  require(XML)
+  require(jsonlite)
+  require(RCurl)
+  ## Parse data
+  tmp <- XML::htmlParse(url)
+  tmp <- XML::xpathSApply(doc = tmp, path = "//body", fun = XML::xmlValue)
+  ## Read url and convert to data.frame
+  db <- jsonlite::fromJSON(txt=tmp)
+  ## Remove IDs
+  db$`_id` <- NULL
+  if(tax_name == TRUE){
+    ## Code legend
+    ## Taxon Level: A numeral corresponding the correct taxonomic level for the taxon
+    taxons <- c(
+      "keyword",                                                       # 0
+      "Phylum", "Subphylum", "Class", "Subclass", "Order", "Suborder", # 3:8
+      "Family", "Subfamily", "Tribe", "Subtribe", "Genus",             # 9:13
+      "Subgenus", "Section", "Subsection", "Series", "Subseries",      # 15:19
+      "Species", "Subspecies", "Variety", "Subvariety", "Form",        # 20:24
+      "Subform", "Form Species")
+    ## Table with coding
+    taxmatch <- data.frame(
+      TaxID = c(0, 3:13, 15:26),
+      Taxon = factor(taxons, levels = taxons))
+    ## Match taxon codes
+    db$taxonomicLevel <- taxmatch[match(x = db$taxonomicLevel, table = taxmatch$TaxID), "Taxon"]
+  }
+  # remove rows with missing data
+  # which(
+  #     with(db, trophicMode == "NULL" & guild == "NULL" & growthForm == "NULL" & trait == "NULL" & notes == "NULL")
+  #     )
+  ## Add database dump date as attributes to the result
+  attr(db, "DownloadDate") <- date()
+  return(db)
+}
+FUNGuild <- parse_funguild()
+
+FUNGuild.temp <- FUNGuild[,-1] #change column 1 to an index column
+rownames(FUNGuild.temp) <- FUNGuild[,1]
+FUNGuild = FUNGuild.temp
+
+```
+
+
+### Compare samples to database
+
+
+```{r}
+# Split
+phylo = phyloITS.split
+phylo.data = as.data.table(tax_table(phylo))
+
+FUNGuild.Taxon <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Family | rownames(FUNGuild) %in% phylo.data$Genus)
+FUNGuild.Family <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Family)
+FUNGuild.Genus <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Genus)
+
+ITS.split.FUN = subset_taxa(phyloITS.split, Family %in% rownames(FUNGuild.Taxon) | Genus %in% rownames(FUNGuild.Taxon))
+
+
+
+TaxTab = as.data.frame(tax_table(ITS.split.FUN))
+TaxTab <- cbind(ID = rownames(TaxTab), TaxTab)
+
+genusTax = TaxTab
+FUNGuild.Genus <- cbind(target = rownames(FUNGuild.Taxon), FUNGuild.Taxon)
+genusTax <- cbind(target = genusTax$Genus, genusTax)
+genusTax <- merge(genusTax, FUNGuild.Genus, by.y = "target")
+rownames(genusTax) = genusTax$ID
+
+
+familyTax = TaxTab
+FUNGuild.Family <- cbind(target = rownames(FUNGuild.Family), FUNGuild.Family)
+familyTax <- cbind(target = familyTax$Family, familyTax)
+familyTax <- merge(familyTax, FUNGuild.Family, by.y = "target")
+rownames(familyTax) = familyTax$ID
+
+
+Rows = subset(familyTax, !(rownames(familyTax) %in% rownames(genusTax)))
+
+TaxTab = rbind(genusTax, Rows)
+
+
+TaxTab = subset(TaxTab, select = -c(target,ID))
+
+tax_table(ITS.split.FUN) = as.matrix(TaxTab)
+
+
+
+
+# Organic
+phylo = phyloITS.ex2
+phylo.data = as.data.table(tax_table(phylo))
+
+FUNGuild.Taxon <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Family | rownames(FUNGuild) %in% phylo.data$Genus)
+FUNGuild.Family <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Family)
+FUNGuild.Genus <- subset(FUNGuild, rownames(FUNGuild) %in% phylo.data$Genus)
+
+ITS.ex2.FUN = subset_taxa(phyloITS.ex2, Family %in% rownames(FUNGuild.Taxon) | Genus %in% rownames(FUNGuild.Taxon))
+
+
+
+TaxTab = as.data.frame(tax_table(ITS.ex2.FUN))
+TaxTab <- cbind(ID = rownames(TaxTab), TaxTab)
+
+genusTax = TaxTab
+FUNGuild.Genus <- cbind(target = rownames(FUNGuild.Taxon), FUNGuild.Taxon)
+genusTax <- cbind(target = genusTax$Genus, genusTax)
+genusTax <- merge(genusTax, FUNGuild.Genus, by.y = "target")
+rownames(genusTax) = genusTax$ID
+
+
+familyTax = TaxTab
+FUNGuild.Family <- cbind(target = rownames(FUNGuild.Family), FUNGuild.Family)
+familyTax <- cbind(target = familyTax$Family, familyTax)
+familyTax <- merge(familyTax, FUNGuild.Family, by.y = "target")
+rownames(familyTax) = familyTax$ID
+
+
+Rows = subset(familyTax, !(rownames(familyTax) %in% rownames(genusTax)))
+
+TaxTab = rbind(genusTax, Rows)
+
+
+TaxTab = subset(TaxTab, select = -c(target,ID))
+
+tax_table(ITS.ex2.FUN) = as.matrix(TaxTab)
+
+
+
+
+
+```
+
+
+
+
+
+
+
+
+
+Now we can try and use the same methods as previously to analyse differences in trophicMode,  guild, growthForm (poor identification), trait (poor identification), and maybe notes (although this requires a certain level of standardisation)
+
+Identified
+
+```{r}
+phylo = ITS.split.FUN
+
+tax_table(phylo) = subset(tax_table(phylo), select = -c(Kingdom,Phylum,Class,Order,Genus,Species,confidenceRanking))
+  
+phylo = tax_glom(phylo, "guild", NArm = T) 
+ 
+# Core ASV 
+core.taxa.standard <- core_members(phylo, detection = 0.001, prevalence = 50/100)
+taxonomy <- as.data.frame(tax_table(phylo))
+
+# Subset this taxonomy table to include only core ASVs
+core_taxa_id <- subset(taxonomy, rownames(taxonomy) %in% core.taxa.standard)
+
+count = dim(core_taxa_id)[1]
+count = array(1:count)
+
+core_taxa_id.temp <- core_taxa_id[,-1]
+rownames(core_taxa_id.temp) <- paste0("Guild ", count)
+core_taxa_id = core_taxa_id.temp
+
+print("Core Microbiome")
+core_taxa_id
+
+```
+
+
+```{r}
+phylo = ITS.ex2.FUN 
+
+tax_table(phylo) = subset(tax_table(phylo), select = -c(Kingdom,Phylum,Class,Order,Genus,Species,taxonomicLevel,confidenceRanking))
+  
+phylo = tax_glom(phylo, "guild", NArm = T) 
+ 
+# Core ASV 
+core.taxa.standard <- core_members(phylo, detection = 0.001, prevalence = 50/100)
+taxonomy <- as.data.frame(tax_table(phylo))
+
+# Subset this taxonomy table to include only core ASVs
+core_taxa_id <- subset(taxonomy, rownames(taxonomy) %in% core.taxa.standard)
+
+count = dim(core_taxa_id)[1]
+count = array(1:count)
+
+core_taxa_id.temp <- core_taxa_id[,-1]
+rownames(core_taxa_id.temp) <- paste0("Guild ", count)
+core_taxa_id = core_taxa_id.temp
+
+print("Core Microbiome")
+core_taxa_id
+
+```
