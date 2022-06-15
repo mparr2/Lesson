@@ -77,40 +77,52 @@ library(ggplot2)    #pretty plots
 library(microbiome) #for some extra tools for analysing phyloseq packages and microbiomes
 #Setting up parallel processing in Windows ----
 cl <- makeCluster(detectCores(), type= 'FORK') #Change to FORK if working on linux, PSOCK on windows 
-registerDoParallel(cl)
+registerDoParallel(cl) #if this doesn't work on your computer due to admin rights, it is fine to exclude these lines. It will be a bit slower though. 
 ```
 
 Download important files and import your DNA sequences
 ```{r}
 #Download sequences from Github
 
+folder <- "~/R/TestFolder/" #Choose where to create the folder for this lesson
+
+if (file.exists(folder)){
+  cat("The folder already exists")
+  } else {
+    dir.create(folder)
+  }
+
+DwnTarget = paste0(folder,"MicroZip.zip")
+download.file(DwnTarget, url = "https://github.com/mparr2/Lesson/archive/refs/heads/main.zip")
+unzip(DwnTarget, exdir = folder)
+
 #Download reference FASTA file
-Silva138 = "~/R/Silva138.fasta.gz"
-#download.file("https://zenodo.org/record/4587955/files/silva_nr99_v138.1_wSpecies_train_set.fa.gz?download=1", Silva138) #download silva 138.1
+Silva138 = paste0(folder, "Silva138.fasta.gz")
+download.file("https://zenodo.org/record/4587955/files/silva_nr99_v138.1_wSpecies_train_set.fa.gz?download=1", Silva138) #download silva 138.1
 
 
-#Unite = "~/R/Unite.fasta.gz"
+#Unite = paste0(folder, "Unite.fasta.gz")
 #download.file("https://files.plutof.ut.ee/public/orig/7B/23/7B235835FAF5C85D7B01E40FEF17F687914CB81A182554C5BD95E3168328E604.tgz", Unite) 
 
-FungiFasta = "~/R/R files/ITS Reads/FERA.ITS.fasta.gz"
+#FungiFasta = "~/R/R files/ITS Reads/FERA.ITS.fasta.gz"
 
 #ASV import
-miseq_path = "~/R/R files/ITS Reads/ITS Reads" #folder location of all sequences in .fastq format
-list.files(miseq_path)[1:20]
+miseq_path = paste0(folder, "Lesson-main/Reads") #folder location of all sequences in .fastq format
+list.files(miseq_path)
 
 ```
 
 Now we should have our forward (R1) and reverse (R2) files 
 ```{r}
-fnFs <- sort(list.files(miseq_path, pattern="_R1_001.fastq"))
-fnRs <- sort(list.files(miseq_path, pattern="_R2_001.fastq"))
+fnFs <- sort(list.files(miseq_path, pattern="_R1_001.fastq")) #forward reads
+fnRs <- sort(list.files(miseq_path, pattern="_R2_001.fastq")) #reverse reads
 
-# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq
+# Extract sample names, assuming filenames have format: SAMPLENAME_XXX.fastq, i.e. everything after the first _ will be removed
 sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
 # Specify the full path to the fnFs and fnRs
 fnFs <- file.path(miseq_path, fnFs)
 fnRs <- file.path(miseq_path, fnRs)
-fnFs[1:3]
+fnFs[1:3] #do these look correct? Might be worth double checking if you aren't sure
 ```
 
 
@@ -121,9 +133,9 @@ Forward
 plotQualityProfile(fnFs[1:2])
 ```
 
-Reverse
+Reverse. These will most likely be worse than the forward reads so don't get upset if they look a little rubbish. 
 ```{r}
-plotQualityProfile(fnRs[1:2])
+plotQualityProfile(fnRs[1:5])
 ```
 
 Now we have looked at our raw sequences, we will now filter and trim them before dereplicating them. This will create our abundances, the number of DNA reads of each unique sequence observed in our samples. 
