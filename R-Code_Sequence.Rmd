@@ -135,7 +135,7 @@ plotQualityProfile(fnFs[1:2])
 
 Reverse. These will most likely be worse than the forward reads so don't get upset if they look a little rubbish. 
 ```{r}
-plotQualityProfile(fnRs[1:5])
+plotQualityProfile(fnRs[1:2])
 ```
 
 Now we have looked at our raw sequences, we will now filter and trim them before dereplicating them. This will create our abundances, the number of DNA reads of each unique sequence observed in our samples. 
