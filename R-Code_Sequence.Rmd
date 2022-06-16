@@ -122,7 +122,7 @@ sampleNames <- sapply(strsplit(fnFs, "_"), `[`, 1)
 # Specify the full path to the fnFs and fnRs
 fnFs <- file.path(miseq_path, fnFs)
 fnRs <- file.path(miseq_path, fnRs)
-fnFs[1:3] #do these look correct? Might be worth double checking if you aren't sure
+fnFs[1] #do these look correct? Might be worth double checking if you aren't sure
 ```
 
 
@@ -130,12 +130,12 @@ We will plot the quality profiles of our reads. We will expect the forward reads
 
 Forward
 ```{r}
-plotQualityProfile(fnFs[1:2])
+plotQualityProfile(fnFs[1])
 ```
 
 Reverse. These will most likely be worse than the forward reads so don't get upset if they look a little rubbish. 
 ```{r}
-plotQualityProfile(fnRs[1:2])
+plotQualityProfile(fnRs[1])
 ```
 
 Now we have looked at our raw sequences, we will now filter and trim them before dereplicating them. This will create our abundances, the number of DNA reads of each unique sequence observed in our samples. 
@@ -149,12 +149,6 @@ filtRs <- file.path(filt_path, paste0(sampleNames, "_R_filt.fastq.gz"))
 out <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, truncLen=c(240,160),
                      maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
                     compress=TRUE, multithread= TRUE) # On Windows set multithread=FALSE
-
-#out1 <- filterAndTrim(fnFs, filtFs, fnRs, filtRs, minLen = 20,
-#                     maxN=0, maxEE=c(2,2), truncQ=2, rm.phix=TRUE,
-#                     compress=TRUE, multithread= TRUE) # On Windows set multithread=FALSE
-
-#out
 head(out)
 
 #infer sequence variants and dereplicate
@@ -189,13 +183,12 @@ dadaFs <- dada(derepFs, err=errF, multithread=TRUE,pool = F)
 saveRDS(dadaFs, "~/R/R files/2022-ITS/dadaFsP.rds")
 dadaRs <- dada(derepRs, err=errR, multithread=TRUE,pool = F)
 saveRDS(dadaRs, "~/R/R files/2022-ITS/dadaRsP.rds")
-dadaFs[[1]]
 
 mergers <- mergePairs(dadaFs, derepFs, dadaRs, derepRs)
 saveRDS(mergers, "~/R/R files/2022-ITS/mergersP.rds")
 ```
 
-Now we will produce our sequence table with our abundances. It is good practice to save these as Rdata files so we can skip past the previous, processing heavy steps if something goes wrong later. 
+Now we will produce our sequence table with our abundances. It is good practice to save these as Rdata files so we can skip past the previous time consuming steps if something goes wrong later. 
 ```{r}
 seqtabAll <- makeSequenceTable(mergers[!grepl("Mock", names(mergers))])
 table(nchar(getSequences(seqtabAll)))
@@ -237,13 +230,6 @@ save(fitGTR, file = "~/R/R files/2022-ITS/fitGTR.RData")
 
 
 
-
-
-
-
-
-
-
 Finally, we can combine our metadata, abundance table, taxonomy table, and our phylogenetic tree into a neat little package called a phyloseq object. This makes manipulation and statistical analysis of our datasets easy and more reproducible.
 ```{r}
 #Combine data into phyloseq object----
@@ -253,9 +239,7 @@ samdf = data.frame(samdf)
 load("~/R/R files/2022-ITS/seqtabNoC.RData") #This allows you to skip the previous time consuming steps
 load("~/R/R files/2022-ITS/seqtabAll.RData")
 
-
 mean(rownames(seqtabAll) %in% rownames(samdf)) == T
-
 
 taxTab[,1] = gsub("NR_[0-9]* ","", taxTab[,1])
 taxTab = gsub( "[a-z]__", "", taxTab)
